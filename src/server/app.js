@@ -1,11 +1,14 @@
 const moment = require('moment');
 const koa = require('koa');
-const route = require('koa-route');
+const koarouter = require('koa-router');
 const cors = require('koa-cors');
 const co = require('co');
-const app = module.exports = koa();
+const app = koa();
 const mongo = require('koa-mongo');
-const bodyParser = require('koa-body-parser');
+const bodyParser = require('koa-bodyparser');
+const _ = require('lodash');
+const ObjectId = require('mongodb').ObjectID;
+const router = koarouter();
 
 app.use(mongo({
     uri: 'mongodb://localhost:27017/todo',
@@ -16,7 +19,16 @@ app.use(mongo({
   })
 );
 
+app.use(cors());
 app.use(bodyParser());
+app.use(router.routes());
+app.use(router.allowedMethods());
+
+const handleError = (err) => {
+  this.status = 500;
+  this.body = err.message;
+  this.app.emit('error', err, this);
+};
 
 app.use(function *(next) {
   const start = new Date;
@@ -33,70 +45,72 @@ app.use(function *(next) {
   console.log('%s :: %s :: %s - %s ms response time', ts, this.method, this.url, ms);
 });
 
-//CORS
-app.use(cors());
+router.get('/errorhandling', function *() {
+  this.status = 500;
+  this.app.emit('error', this);
+  });
 
-//get ect..
-app.use(route.get('/', function *() {
+router.get('/', function *() {
   this.body = 'Hello World, how is it hanging ?';
-  })
-);
+  });
 
-app.use(route.get('/todo/lists', function *(next) {
+router.get('/todo/lists', function *() {
   try {
-    this.body = yield this.mongo.db('todo').collection('lists').find().toArray();
+    const lists = yield this.mongo.db('todo').collection('lists').find().toArray();
+    this.body = _.map(lists, (list) => { list._id = list._id.toString(); list.id = list._id; return list; });
   } catch (err) {
-    this.status = 500;
-    this.body = err.message;
-    this.app.emit('error', err, this);
+    handleError(err);
   }
-  })
-);
+  });
 
-app.use(route.get('/todo/tasks', function *(next) {
+router.get('/todo/tasks', function *() {
   try {
-    yield this.mongo.db('todo').collection('tasks').find().toArray();
+    const tasks = yield this.mongo.db('todo').collection('tasks').find().toArray();
+    this.body = _.map(tasks, (task) => { task._id = task._id.toString(); task.id = task._id; return task; })
   } catch (err) {
-    this.status = 500;
-    this.body = err.message;
-    this.app.emit('error', err, this);
+    handleError(err);
   }
-  })
-);
+  });
 
-app.use(route.post('/todo/lists', function *(next) {
+router.post('/todo/lists', function *() {
   try {
     yield this.mongo.db('todo').collection('lists').insertOne({ label: this.request.body.todo.label });
-    const id = yield this.mongo.db('todo').collection('lists').findOne({ label: this.request.body.todo.label });
-    this.body = { id: id._id, label: this.request.body.todo.label };
+    const inserted = yield this.mongo.db('todo').collection('lists').findOne({ label: this.request.body.todo.label });
+    this.body = { id: inserted._id.toString(), label: this.request.body.todo.label };
   } catch (err) {
-    this.status = 500;
-    this.body = err.message;
-    this.app.emit('error', err, this);
+    handleError(err);
   }
-  })
-);
+  });
 
-app.use(route.post('/todo/tasks', function *(next) {
+router.post('/todo/tasks', function *() {
   try {
-    yield this.mongo.db('todo').collection('tasks').insertOne({ description: this.request.body.todo.description, listId: this.request.body.todo.listId });
-    const id = yield this.mongo.db('todo').collection('tasks').findOne({ description: this.request.body.todo.description, listId: this.request.body.todo.listId });
-    this.body = { id: id._id, description: this.request.body.todo.description, listId: this.request.body.todo.listId };
+    yield this.mongo.db('todo').collection('tasks').insertOne({ description: this.request.body.task.description, listId: this.request.body.task.listId.toString() });
+    const inserted = yield this.mongo.db('todo').collection('tasks').findOne({ description: this.request.body.task.description, listId: this.request.body.task.listId.toString() });
+    this.body = { id: inserted._id.toString(), description: this.request.body.task.description, listId: this.request.body.task.listId.toString() };
   } catch (err) {
-    this.status = 500;
-    this.body = err.message;
-    this.app.emit('error', err, this);
+    handleError(err);
   }
-  })
-);
+  });
 
 
-if (!module.parent) {
-  app.listen(3000);
-  console.log('Listening on port 3000');
-}
-  //this.body = 'Hello World, I SAID HOW IS IT HANGING ?';
+router.delete('/todo/lists/:id', function *() {
+  try {
+    yield this.mongo.db('todo').collection('tasks').deleteMany({ listId: ObjectId(this.url.slice(12)) });
+    yield this.mongo.db('todo').collection('lists').deleteOne({ _id: ObjectId(this.url.slice(12)) });
+    this.body = { message: 'OK' };
+  } catch (err) {
+    handleError(err);
+  }
+  });
 
+router.delete('/todo/tasks/:id', function *() {
+  try {
+    yield this.mongo.db('todo').collection('tasks').deleteOne({ _id: ObjectId(this.url.slice(12)) });
+    this.body = { message: 'OK' };
+  } catch (err) {
+    handleError(err);
+  }
+  });
 
-//app.use(route.get())
-//voilà la liste des méthodes à utiliser: hset, sadd, srem, scard, hdel, hkeys, incr, del, hget
+app.listen(3000);
+console.log('Listening on port 3000');
