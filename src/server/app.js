@@ -4,20 +4,19 @@ const koarouter = require('koa-router');
 const cors = require('koa-cors');
 const co = require('co');
 const app = koa();
-const mongo = require('koa-mongo');
+const mongo = require('mongodb');
 const bodyParser = require('koa-bodyparser');
 const _ = require('lodash');
 const ObjectId = require('mongodb').ObjectID;
 const router = koarouter();
 
-app.use(mongo({
-    uri: 'mongodb://localhost:27017/todo',
-    max: 100,
-    min: 1,
-    timeout: 30000,
-    log: false
-  })
-);
+app.use(function* (next) {
+  this.mongo = {
+    db: yield mongo.connect('mongodb://localhost:27017/todo'),
+  };
+  yield next;
+  this.mongo.db.close();
+});
 
 app.use(cors());
 app.use(bodyParser());
@@ -45,6 +44,7 @@ app.use(function *(next) {
   console.log('%s :: %s :: %s - %s ms response time', ts, this.method, this.url, ms);
 });
 
+//get ect..
 router.get('/errorhandling', function *() {
   this.status = 500;
   this.app.emit('error', this);
@@ -56,7 +56,7 @@ router.get('/', function *() {
 
 router.get('/todo/lists', function *() {
   try {
-    const lists = yield this.mongo.db('todo').collection('lists').find().toArray();
+    const lists = yield this.mongo.db.collection('lists').find().toArray();
     this.body = _.map(lists, (list) => { list._id = list._id.toString(); list.id = list._id; return list; });
   } catch (err) {
     handleError(err);
@@ -65,7 +65,7 @@ router.get('/todo/lists', function *() {
 
 router.get('/todo/tasks', function *() {
   try {
-    const tasks = yield this.mongo.db('todo').collection('tasks').find().toArray();
+    const tasks = yield this.mongo.db.collection('tasks').find().toArray();
     this.body = _.map(tasks, (task) => { task._id = task._id.toString(); task.id = task._id; return task; })
   } catch (err) {
     handleError(err);
@@ -74,8 +74,8 @@ router.get('/todo/tasks', function *() {
 
 router.post('/todo/lists', function *() {
   try {
-    yield this.mongo.db('todo').collection('lists').insertOne({ label: this.request.body.todo.label });
-    const inserted = yield this.mongo.db('todo').collection('lists').findOne({ label: this.request.body.todo.label });
+    yield this.mongo.db.collection('lists').insertOne({ label: this.request.body.todo.label });
+    const inserted = yield this.mongo.db.collection('lists').findOne({ label: this.request.body.todo.label });
     this.body = { id: inserted._id.toString(), label: this.request.body.todo.label };
   } catch (err) {
     handleError(err);
@@ -84,8 +84,8 @@ router.post('/todo/lists', function *() {
 
 router.post('/todo/tasks', function *() {
   try {
-    yield this.mongo.db('todo').collection('tasks').insertOne({ description: this.request.body.task.description, listId: this.request.body.task.listId.toString() });
-    const inserted = yield this.mongo.db('todo').collection('tasks').findOne({ description: this.request.body.task.description, listId: this.request.body.task.listId.toString() });
+    yield this.mongo.db.collection('tasks').insertOne({ description: this.request.body.task.description, listId: this.request.body.task.listId.toString() });
+    const inserted = yield this.mongo.db.collection('tasks').findOne({ description: this.request.body.task.description, listId: this.request.body.task.listId.toString() });
     this.body = { id: inserted._id.toString(), description: this.request.body.task.description, listId: this.request.body.task.listId.toString() };
   } catch (err) {
     handleError(err);
@@ -95,8 +95,8 @@ router.post('/todo/tasks', function *() {
 
 router.delete('/todo/lists/:id', function *() {
   try {
-    yield this.mongo.db('todo').collection('tasks').deleteMany({ listId: ObjectId(this.url.slice(12)) });
-    yield this.mongo.db('todo').collection('lists').deleteOne({ _id: ObjectId(this.url.slice(12)) });
+    yield this.mongo.db.collection('tasks').deleteMany({ listId: ObjectId(this.params.id) });
+    yield this.mongo.db.collection('lists').deleteOne({ _id: ObjectId(this.params.id) });
     this.body = { message: 'OK' };
   } catch (err) {
     handleError(err);
@@ -105,7 +105,7 @@ router.delete('/todo/lists/:id', function *() {
 
 router.delete('/todo/tasks/:id', function *() {
   try {
-    yield this.mongo.db('todo').collection('tasks').deleteOne({ _id: ObjectId(this.url.slice(12)) });
+    yield this.mongo.db.collection('tasks').deleteOne({ _id: ObjectId(this.params.id) });
     this.body = { message: 'OK' };
   } catch (err) {
     handleError(err);
